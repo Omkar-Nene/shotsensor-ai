@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { DetectionResult, GameMode } from '@/types';
-import { detectBalls } from '@/lib/detection/ballDetector';
+import { detectBalls } from '@/lib/detection/simpleBallDetector'; // Using simplified detector
 import BallOverlay from './BallOverlay';
 
 interface DetectionProcessorProps {
@@ -89,23 +89,45 @@ export default function DetectionProcessor({
           </div>
 
           {/* Ball Type Breakdown */}
-          <div className="mt-4 pt-4 border-t border-blue-500/20">
-            <p className="text-blue-300/70 text-sm mb-2">Detected Ball Types:</p>
-            <div className="space-y-1">
-              {getBallTypeCounts(detectionResult).map(({ type, count, color }) => (
-                <div key={type} className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="w-4 h-4 rounded-full border-2 border-white"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="text-blue-200 capitalize">{type}</span>
+          {detectionResult.balls.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-blue-500/20">
+              <p className="text-blue-300/70 text-sm mb-2">Detected Ball Types:</p>
+              <div className="space-y-1">
+                {getBallTypeCounts(detectionResult).map(({ type, count, color }) => (
+                  <div key={type} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-4 h-4 rounded-full border-2 border-white"
+                        style={{ backgroundColor: color }}
+                      />
+                      <span className="text-blue-200 capitalize">{type}</span>
+                    </div>
+                    <span className="text-white font-semibold">{count}</span>
                   </div>
-                  <span className="text-white font-semibold">{count}</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* No balls detected warning */}
+          {detectionResult.balls.length === 0 && (
+            <div className="mt-4 pt-4 border-t border-yellow-500/20">
+              <div className="flex items-start gap-2 text-yellow-300">
+                <span>⚠️</span>
+                <div className="text-sm">
+                  <p className="font-semibold">No balls detected!</p>
+                  <p className="text-yellow-300/70 mt-1">Try these tips:</p>
+                  <ul className="list-disc ml-4 mt-1 space-y-1 text-xs">
+                    <li>Use an overhead view of the table</li>
+                    <li>Ensure good lighting</li>
+                    <li>Make sure balls are clearly visible</li>
+                    <li>Try a different image or angle</li>
+                    <li>Check browser console for debug info</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
