@@ -115,15 +115,14 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Simplified circle detection using color-based approach
- * Looks for round, colored objects
+ * Two-phase detection: Find cue ball first, then use its size to find other balls
  */
 function findCirclesSimple(
   imageData: ImageData,
   width: number,
   height: number
 ): Circle[] {
-  const circles: Circle[] = [];
+  console.log('=== PHASE 1: Finding cue ball ===');
 
   // Expected ball size range (as percentage of image)
   const minRadius = Math.floor(Math.min(width, height) * 0.015); // 1.5%
@@ -133,23 +132,42 @@ function findCirclesSimple(
     imageSize: `${width}x${height}`,
     minRadius,
     maxRadius,
-    step: Math.floor(minRadius * 0.8)
   });
 
   // Create edge map
   const edges = detectEdgesSimple(imageData, width, height);
 
-  // Sample grid - check every ball-width distance
-  const step = Math.floor(minRadius * 0.8);
+  // PHASE 1: Find the cue ball (white, brightest ball)
+  const cueBall = findCueBall(imageData, edges, width, height, minRadius, maxRadius);
 
-  for (let y = maxRadius; y < height - maxRadius; y += step) {
-    for (let x = maxRadius; x < width - maxRadius; x += step) {
+  if (!cueBall) {
+    console.warn('Could not find cue ball! Falling back to standard detection.');
+    return findCirclesStandard(imageData, edges, width, height, minRadius, maxRadius);
+  }
 
-      // Try different radii
-      for (let r = minRadius; r <= maxRadius; r += Math.max(2, Math.floor(r * 0.2))) {
+  console.log(`✓ Found cue ball at (${cueBall.x}, ${cueBall.y}) radius=${cueBall.radius}`);
+  console.log('=== PHASE 2: Finding other balls using cue ball size ===');
 
-        // Check if this looks like a circle
-        const score = scoreCircleSimple(
+  // PHASE 2: Use cue ball radius (±20%) to find other balls
+  const targetRadius = cueBall.radius;
+  const radiusMin = Math.floor(targetRadius * 0.8);
+  const radiusMax = Math.ceil(targetRadius * 1.2);
+
+  console.log(`Searching for balls with radius ${radiusMin}-${radiusMax}px`);
+
+  const allBalls: Circle[] = [cueBall];
+  const step = Math.floor(targetRadius * 0.6); // Search every 60% of ball width
+
+  for (let y = radiusMax; y < height - radiusMax; y += step) {
+    for (let x = radiusMax; x < width - radiusMax; x += step) {
+
+      // Skip if too close to cue ball
+      const distToCue = Math.sqrt((x - cueBall.x) ** 2 + (y - cueBall.y) ** 2);
+      if (distToCue < targetRadius * 1.5) continue;
+
+      // Try radii around the target
+      for (let r = radiusMin; r <= radiusMax; r += 2) {
+        const score = scoreCircleForBall(
           imageData,
           edges,
           width,
@@ -159,24 +177,95 @@ function findCirclesSimple(
           r
         );
 
-        if (score > 0.30) { // Balanced threshold
+        if (score > 0.25) { // Lower threshold since we know the size
+          allBalls.push({ x, y, radius: r, score });
+        }
+      }
+    }
+  }
+
+  console.log('Candidate balls before NMS:', allBalls.length);
+
+  // Remove overlapping circles
+  const filtered = nonMaximumSuppression(allBalls);
+
+  console.log('Final balls after NMS:', filtered.length);
+
+  return filtered
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 22); // Max balls in snooker
+}
+
+/**
+ * Find the cue ball (white, brightest ball)
+ */
+function findCueBall(
+  imageData: ImageData,
+  edges: Uint8Array,
+  width: number,
+  height: number,
+  minRadius: number,
+  maxRadius: number
+): Circle | null {
+  const candidates: Circle[] = [];
+  const step = Math.floor(minRadius * 0.8);
+
+  for (let y = maxRadius; y < height - maxRadius; y += step) {
+    for (let x = maxRadius; x < width - maxRadius; x += step) {
+      // Get pixel color
+      const idx = (y * width + x) * 4;
+      const r = imageData.data[idx];
+      const g = imageData.data[idx + 1];
+      const b = imageData.data[idx + 2];
+      const brightness = (r + g + b) / 3;
+
+      // Look for white pixels (cue ball)
+      if (brightness > 180 && Math.abs(r - g) < 30 && Math.abs(g - b) < 30) {
+        // Found potential cue ball center - try different radii
+        for (let rad = minRadius; rad <= maxRadius; rad += Math.max(2, Math.floor(rad * 0.2))) {
+          const score = scoreCircleForBall(imageData, edges, width, height, x, y, rad);
+          if (score > 0.3) {
+            candidates.push({ x, y, radius: rad, score: score * 1.2 }); // Boost cue ball score
+          }
+        }
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Return brightest candidate
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
+}
+
+/**
+ * Standard detection fallback if cue ball not found
+ */
+function findCirclesStandard(
+  imageData: ImageData,
+  edges: Uint8Array,
+  width: number,
+  height: number,
+  minRadius: number,
+  maxRadius: number
+): Circle[] {
+  const circles: Circle[] = [];
+  const step = Math.floor(minRadius * 0.8);
+
+  for (let y = maxRadius; y < height - maxRadius; y += step) {
+    for (let x = maxRadius; x < width - maxRadius; x += step) {
+      for (let r = minRadius; r <= maxRadius; r += Math.max(2, Math.floor(r * 0.2))) {
+        const score = scoreCircleForBall(imageData, edges, width, height, x, y, r);
+        if (score > 0.30) {
           circles.push({ x, y, radius: r, score });
         }
       }
     }
   }
 
-  console.log('Candidate circles before NMS:', circles.length);
-
-  // Remove overlapping circles
   const filtered = nonMaximumSuppression(circles);
-
-  console.log('Circles after NMS:', filtered.length);
-
-  // Return top circles
-  return filtered
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 22); // Max balls in snooker
+  return filtered.sort((a, b) => b.score - a.score).slice(0, 22);
 }
 
 /**
@@ -210,9 +299,9 @@ function detectEdgesSimple(
 }
 
 /**
- * Score a potential circle - with strict filtering for balls only
+ * Score a potential circle as a ball
  */
-function scoreCircleSimple(
+function scoreCircleForBall(
   imageData: ImageData,
   edges: Uint8Array,
   width: number,
@@ -232,34 +321,21 @@ function scoreCircleSimple(
   const centerA = imageData.data[centerIdx + 3];
 
   // Skip transparent or invalid pixels
-  if (centerA < 200) {
-    console.log(`Rejected at (${cx},${cy}): transparent/invalid alpha=${centerA}`);
-    return 0;
-  }
+  if (centerA < 200) return 0;
 
   const centerBrightness = (centerR + centerG + centerB) / 3;
 
   // Filter out ONLY obvious pockets (extremely dark)
-  if (centerBrightness < 15) {
-    console.log(`Rejected at (${cx},${cy}): too dark (pocket) brightness=${centerBrightness.toFixed(0)}`);
-    return 0; // Definitely a pocket or shadow
-  }
+  if (centerBrightness < 15) return 0;
 
-  // Filter out table felt (usually cyan/green, high brightness, low saturation)
+  // Filter out table felt
   const isTableFelt = checkIfTableFelt(centerR, centerG, centerB);
-  if (isTableFelt) {
-    console.log(`Rejected at (${cx},${cy}): table felt RGB(${centerR},${centerG},${centerB})`);
-    return 0;
-  }
+  if (isTableFelt) return 0;
 
   // Check if near image border (pockets are usually at edges)
   const margin = r * 2;
   if (cx < margin || cx > width - margin || cy < margin || cy > height - margin) {
-    // Extra strict for edge circles (likely pockets)
-    if (centerBrightness < 25) {
-      console.log(`Rejected at (${cx},${cy}): border pocket brightness=${centerBrightness.toFixed(0)}`);
-      return 0;
-    }
+    if (centerBrightness < 25) return 0;
   }
 
   const perimeter: Array<{r: number, g: number, b: number}> = [];
@@ -289,10 +365,7 @@ function scoreCircleSimple(
 
   // Need decent edge detection
   const edgeScore = edgeVotes / samples;
-  if (edgeScore < 0.25) { // Lowered from 0.3
-    console.log(`Rejected at (${cx},${cy}): low edge score ${edgeScore.toFixed(2)} (need 0.25+)`);
-    return 0; // Not circular enough
-  }
+  if (edgeScore < 0.20) return 0; // More lenient
 
   // Check color consistency (balls are uniformly colored)
   let totalColorDiff = 0;
@@ -304,24 +377,18 @@ function scoreCircleSimple(
 
   // Balls should be fairly uniform in color
   let colorConsistency = 0;
-  if (avgColorDiff < 100) { // Raised from 80 to be more lenient
-    colorConsistency = 1 - (avgColorDiff / 100);
+  if (avgColorDiff < 120) { // More lenient
+    colorConsistency = 1 - (avgColorDiff / 120);
   } else {
-    console.log(`Rejected at (${cx},${cy}): too much color variation avgDiff=${avgColorDiff.toFixed(0)} (need <100)`);
-    return 0; // Too much color variation, not a ball
-  }
-
-  // Check if it has ball-like colors (not brown/dark like table wood)
-  const hasBallColor = checkIfBallColor(centerR, centerG, centerB, centerBrightness);
-  if (!hasBallColor) {
-    console.log(`Rejected at (${cx},${cy}): not ball color RGB(${centerR},${centerG},${centerB}) brightness=${centerBrightness.toFixed(0)}`);
     return 0;
   }
 
+  // Check if it has ball-like colors
+  const hasBallColor = checkIfBallColor(centerR, centerG, centerB, centerBrightness);
+  if (!hasBallColor) return 0;
+
   // Calculate final score
   const finalScore = (edgeScore * 0.5) + (colorConsistency * 0.5);
-
-  console.log(`✓ Accepted at (${cx},${cy}) r=${r}: score=${finalScore.toFixed(2)} RGB(${centerR},${centerG},${centerB})`);
 
   return finalScore;
 }
