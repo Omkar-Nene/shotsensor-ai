@@ -6,10 +6,11 @@
 'use client';
 
 import { useState } from 'react';
-import { GameMode, PoolBallType, AppState } from '@/types';
+import { GameMode, PoolBallType, AppState, DetectionResult } from '@/types';
 import GameModeSelector from '@/components/ui/GameModeSelector';
 import PlayerTypeSelector from '@/components/ui/PlayerTypeSelector';
 import CameraCapture from '@/components/camera/CameraCapture';
+import DetectionProcessor from '@/components/detection/DetectionProcessor';
 
 export default function Home() {
   // Application state
@@ -60,16 +61,17 @@ export default function Home() {
       currentStep: 'detection',
       isProcessing: true,
     });
+  };
 
-    // TODO: Trigger ball detection
-    // For now, just simulate processing
-    setTimeout(() => {
-      setAppState((prev) => ({
-        ...prev,
-        isProcessing: false,
-        currentStep: 'recommendations',
-      }));
-    }, 2000);
+  // Handle detection complete
+  const handleDetectionComplete = (result: DetectionResult) => {
+    console.log('Detection complete:', result);
+    setAppState({
+      ...appState,
+      detectionResult: result,
+      isProcessing: false,
+      currentStep: 'recommendations',
+    });
   };
 
   // Handle errors
@@ -104,18 +106,15 @@ export default function Home() {
       case 'detection':
         return (
           <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-6">
-            <div className="text-center space-y-6">
-              <div className="animate-spin w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full mx-auto" />
-              <h2 className="text-2xl font-bold text-white">
-                Analyzing Table...
-              </h2>
-              <p className="text-blue-200">Detecting balls and calculating shots</p>
-              <div className="space-y-2 text-sm text-blue-300/80">
-                <p>✓ Image processed</p>
-                <p className="animate-pulse">⟳ Detecting balls...</p>
-                <p className="text-blue-300/50">○ Classifying colors</p>
-                <p className="text-blue-300/50">○ Calculating trajectories</p>
-              </div>
+            <div className="max-w-4xl w-full">
+              {appState.capturedImage && appState.gameMode && (
+                <DetectionProcessor
+                  imageDataUrl={appState.capturedImage}
+                  gameMode={appState.gameMode}
+                  onComplete={handleDetectionComplete}
+                  onError={handleError}
+                />
+              )}
             </div>
           </div>
         );
@@ -123,27 +122,93 @@ export default function Home() {
       case 'recommendations':
         return (
           <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-6">
-            <div className="text-center space-y-6">
-              <div className="text-6xl">🎱</div>
-              <h2 className="text-2xl font-bold text-white">
-                Detection Complete!
-              </h2>
-              <p className="text-blue-200">
-                Shot recommendations coming soon...
-              </p>
-              <button
-                onClick={() =>
-                  setAppState({
-                    ...appState,
-                    currentStep: 'mode-select',
-                    capturedImage: null,
-                    detectionResult: null,
-                  })
-                }
-                className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
-              >
-                Start Over
-              </button>
+            <div className="max-w-4xl w-full space-y-6">
+              {/* Show detection result */}
+              {appState.capturedImage && appState.detectionResult && (
+                <>
+                  <div className="text-center space-y-2">
+                    <h2 className="text-3xl font-bold text-white">
+                      ✓ Detection Complete!
+                    </h2>
+                    <p className="text-blue-200">
+                      Found {appState.detectionResult.balls.length} balls on the table
+                    </p>
+                  </div>
+
+                  {/* Import and show BallOverlay */}
+                  <div className="space-y-4">
+                    <img
+                      src={appState.capturedImage}
+                      alt="Detected table"
+                      className="w-full rounded-lg shadow-2xl"
+                    />
+
+                    {/* Ball list */}
+                    <div className="bg-blue-900/30 border border-blue-500/30 rounded-xl p-4">
+                      <h3 className="font-semibold text-white mb-3">Detected Balls:</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                        {appState.detectionResult.balls.map((ball, index) => (
+                          <div
+                            key={ball.id}
+                            className="flex items-center gap-2 bg-blue-900/20 rounded-lg p-2"
+                          >
+                            <div
+                              className="w-6 h-6 rounded-full border-2 border-white"
+                              style={{ backgroundColor: ball.color }}
+                            />
+                            <div className="text-sm">
+                              <p className="text-white font-medium capitalize">{ball.ballType}</p>
+                              <p className="text-blue-300/70 text-xs">
+                                {Math.round(ball.confidence * 100)}% confident
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() =>
+                        setAppState({
+                          ...appState,
+                          currentStep: 'capture',
+                          capturedImage: null,
+                          detectionResult: null,
+                        })
+                      }
+                      className="flex-1 px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors font-semibold"
+                    >
+                      📷 Analyze Another Table
+                    </button>
+                    <button
+                      onClick={() =>
+                        setAppState({
+                          ...appState,
+                          currentStep: 'mode-select',
+                          gameMode: null,
+                          playerBallType: null,
+                          capturedImage: null,
+                          detectionResult: null,
+                        })
+                      }
+                      className="px-6 py-3 bg-blue-600/50 text-white rounded-xl hover:bg-blue-600 transition-colors"
+                    >
+                      ← Start Over
+                    </button>
+                  </div>
+
+                  {/* Coming soon notice */}
+                  <div className="bg-yellow-900/30 border border-yellow-500/30 rounded-xl p-4 text-center">
+                    <p className="text-yellow-200 font-semibold">🎯 Shot Recommendations Coming in Phase 3!</p>
+                    <p className="text-yellow-300/70 text-sm mt-1">
+                      We'll calculate the best shots based on detected ball positions
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         );
