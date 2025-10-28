@@ -159,7 +159,7 @@ function findCirclesSimple(
           r
         );
 
-        if (score > 0.25) { // Lower threshold for MVP
+        if (score > 0.35) { // Raised threshold to reduce false positives
           circles.push({ x, y, radius: r, score });
         }
       }
@@ -210,7 +210,7 @@ function detectEdgesSimple(
 }
 
 /**
- * Score a potential circle - simplified version
+ * Score a potential circle - with strict filtering for balls only
  */
 function scoreCircleSimple(
   imageData: ImageData,
@@ -221,23 +221,44 @@ function scoreCircleSimple(
   cy: number,
   r: number
 ): number {
-  const samples = 16;
+  const samples = 24;
   let edgeVotes = 0;
-  let colorConsistency = 0;
 
   // Get center color
   const centerIdx = (cy * width + cx) * 4;
   const centerR = imageData.data[centerIdx];
   const centerG = imageData.data[centerIdx + 1];
   const centerB = imageData.data[centerIdx + 2];
+  const centerA = imageData.data[centerIdx + 3];
 
-  // Check if center is not white/black table surface
-  const centerBrightness = (centerR + centerG + centerB) / 3;
-  if (centerBrightness < 30 || centerBrightness > 230) {
-    return 0; // Likely table surface
+  // Skip transparent or invalid pixels
+  if (centerA < 200) {
+    return 0;
   }
 
-  const colors: number[] = [];
+  const centerBrightness = (centerR + centerG + centerB) / 3;
+
+  // Filter out pockets (very dark, near black)
+  if (centerBrightness < 25) {
+    return 0; // Definitely a pocket or shadow
+  }
+
+  // Filter out table felt (usually cyan/green, high brightness, low saturation)
+  const isTableFelt = checkIfTableFelt(centerR, centerG, centerB);
+  if (isTableFelt) {
+    return 0;
+  }
+
+  // Check if near image border (pockets are usually at edges)
+  const margin = r * 2;
+  if (cx < margin || cx > width - margin || cy < margin || cy > height - margin) {
+    // Extra strict for edge circles (likely pockets)
+    if (centerBrightness < 40) {
+      return 0;
+    }
+  }
+
+  const perimeter: Array<{r: number, g: number, b: number}> = [];
 
   // Sample around perimeter
   for (let i = 0; i < samples; i++) {
@@ -248,37 +269,110 @@ function scoreCircleSimple(
     if (px >= 0 && px < width && py >= 0 && py < height) {
       // Check edge strength
       const edgeStrength = edges[py * width + px];
-      if (edgeStrength > 30) {
+      if (edgeStrength > 40) {
         edgeVotes++;
       }
 
-      // Check color consistency
+      // Collect perimeter colors
       const idx = (py * width + px) * 4;
-      const sampleR = imageData.data[idx];
-      const sampleG = imageData.data[idx + 1];
-      const sampleB = imageData.data[idx + 2];
-
-      const colorDiff = Math.abs(sampleR - centerR) +
-                       Math.abs(sampleG - centerG) +
-                       Math.abs(sampleB - centerB);
-
-      colors.push(colorDiff);
+      perimeter.push({
+        r: imageData.data[idx],
+        g: imageData.data[idx + 1],
+        b: imageData.data[idx + 2],
+      });
     }
   }
 
-  // Calculate average color difference
-  const avgColorDiff = colors.reduce((a, b) => a + b, 0) / colors.length;
-
-  // Balls should have relatively consistent color
-  if (avgColorDiff < 100) {
-    colorConsistency = 1 - (avgColorDiff / 100);
+  // Need decent edge detection
+  const edgeScore = edgeVotes / samples;
+  if (edgeScore < 0.3) {
+    return 0; // Not circular enough
   }
 
-  // Calculate score
-  const edgeScore = edgeVotes / samples;
-  const finalScore = (edgeScore * 0.4) + (colorConsistency * 0.6);
+  // Check color consistency (balls are uniformly colored)
+  let totalColorDiff = 0;
+  for (const p of perimeter) {
+    const diff = Math.abs(p.r - centerR) + Math.abs(p.g - centerG) + Math.abs(p.b - centerB);
+    totalColorDiff += diff;
+  }
+  const avgColorDiff = totalColorDiff / perimeter.length;
+
+  // Balls should be fairly uniform in color
+  let colorConsistency = 0;
+  if (avgColorDiff < 80) {
+    colorConsistency = 1 - (avgColorDiff / 80);
+  } else {
+    return 0; // Too much color variation, not a ball
+  }
+
+  // Check if it has ball-like colors (not brown/dark like table wood)
+  const hasBallColor = checkIfBallColor(centerR, centerG, centerB, centerBrightness);
+  if (!hasBallColor) {
+    return 0;
+  }
+
+  // Calculate final score
+  const finalScore = (edgeScore * 0.5) + (colorConsistency * 0.5);
 
   return finalScore;
+}
+
+/**
+ * Check if color is table felt (cyan/green)
+ */
+function checkIfTableFelt(r: number, g: number, b: number): boolean {
+  // Pool table felt is typically cyan/turquoise/green
+  // High in green and blue, lower in red, medium-high brightness
+
+  const brightness = (r + g + b) / 3;
+
+  // Cyan/turquoise felt (common in pool)
+  if (g > 100 && b > 100 && r < 100 && brightness > 100) {
+    return true;
+  }
+
+  // Green felt (common in snooker)
+  if (g > 120 && g > r * 1.5 && g > b * 1.2 && brightness > 80) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if color could be a pool/snooker ball
+ */
+function checkIfBallColor(r: number, g: number, b: number, brightness: number): boolean {
+  // Balls are usually:
+  // - White (cue ball): very bright, low saturation
+  // - Colored: medium-high saturation, various hues
+  // - NOT dark brown (table rails)
+  // - NOT cyan/green (table felt)
+
+  // White ball (very bright)
+  if (brightness > 200 && Math.abs(r - g) < 30 && Math.abs(g - b) < 30) {
+    return true;
+  }
+
+  // Colored balls: at least one channel should be strong
+  const maxChannel = Math.max(r, g, b);
+  const minChannel = Math.min(r, g, b);
+  const saturation = maxChannel - minChannel;
+
+  // Good saturation indicates a colored ball
+  if (saturation > 40 && brightness > 50 && brightness < 220) {
+    // Not table felt
+    if (!checkIfTableFelt(r, g, b)) {
+      return true;
+    }
+  }
+
+  // Black/dark balls (8-ball, black in snooker)
+  if (brightness < 60 && brightness > 15 && Math.abs(r - g) < 20 && Math.abs(g - b) < 20) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
