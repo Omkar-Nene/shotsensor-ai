@@ -233,6 +233,7 @@ function scoreCircleSimple(
 
   // Skip transparent or invalid pixels
   if (centerA < 200) {
+    console.log(`Rejected at (${cx},${cy}): transparent/invalid alpha=${centerA}`);
     return 0;
   }
 
@@ -240,12 +241,14 @@ function scoreCircleSimple(
 
   // Filter out ONLY obvious pockets (extremely dark)
   if (centerBrightness < 15) {
+    console.log(`Rejected at (${cx},${cy}): too dark (pocket) brightness=${centerBrightness.toFixed(0)}`);
     return 0; // Definitely a pocket or shadow
   }
 
   // Filter out table felt (usually cyan/green, high brightness, low saturation)
   const isTableFelt = checkIfTableFelt(centerR, centerG, centerB);
   if (isTableFelt) {
+    console.log(`Rejected at (${cx},${cy}): table felt RGB(${centerR},${centerG},${centerB})`);
     return 0;
   }
 
@@ -254,6 +257,7 @@ function scoreCircleSimple(
   if (cx < margin || cx > width - margin || cy < margin || cy > height - margin) {
     // Extra strict for edge circles (likely pockets)
     if (centerBrightness < 25) {
+      console.log(`Rejected at (${cx},${cy}): border pocket brightness=${centerBrightness.toFixed(0)}`);
       return 0;
     }
   }
@@ -286,6 +290,7 @@ function scoreCircleSimple(
   // Need decent edge detection
   const edgeScore = edgeVotes / samples;
   if (edgeScore < 0.25) { // Lowered from 0.3
+    console.log(`Rejected at (${cx},${cy}): low edge score ${edgeScore.toFixed(2)} (need 0.25+)`);
     return 0; // Not circular enough
   }
 
@@ -302,17 +307,21 @@ function scoreCircleSimple(
   if (avgColorDiff < 100) { // Raised from 80 to be more lenient
     colorConsistency = 1 - (avgColorDiff / 100);
   } else {
+    console.log(`Rejected at (${cx},${cy}): too much color variation avgDiff=${avgColorDiff.toFixed(0)} (need <100)`);
     return 0; // Too much color variation, not a ball
   }
 
   // Check if it has ball-like colors (not brown/dark like table wood)
   const hasBallColor = checkIfBallColor(centerR, centerG, centerB, centerBrightness);
   if (!hasBallColor) {
+    console.log(`Rejected at (${cx},${cy}): not ball color RGB(${centerR},${centerG},${centerB}) brightness=${centerBrightness.toFixed(0)}`);
     return 0;
   }
 
   // Calculate final score
   const finalScore = (edgeScore * 0.5) + (colorConsistency * 0.5);
+
+  console.log(`✓ Accepted at (${cx},${cy}) r=${r}: score=${finalScore.toFixed(2)} RGB(${centerR},${centerG},${centerB})`);
 
   return finalScore;
 }
