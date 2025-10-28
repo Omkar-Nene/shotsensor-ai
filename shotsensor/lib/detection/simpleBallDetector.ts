@@ -159,7 +159,7 @@ function findCirclesSimple(
           r
         );
 
-        if (score > 0.35) { // Raised threshold to reduce false positives
+        if (score > 0.30) { // Balanced threshold
           circles.push({ x, y, radius: r, score });
         }
       }
@@ -238,8 +238,8 @@ function scoreCircleSimple(
 
   const centerBrightness = (centerR + centerG + centerB) / 3;
 
-  // Filter out pockets (very dark, near black)
-  if (centerBrightness < 25) {
+  // Filter out ONLY obvious pockets (extremely dark)
+  if (centerBrightness < 15) {
     return 0; // Definitely a pocket or shadow
   }
 
@@ -253,7 +253,7 @@ function scoreCircleSimple(
   const margin = r * 2;
   if (cx < margin || cx > width - margin || cy < margin || cy > height - margin) {
     // Extra strict for edge circles (likely pockets)
-    if (centerBrightness < 40) {
+    if (centerBrightness < 25) {
       return 0;
     }
   }
@@ -285,7 +285,7 @@ function scoreCircleSimple(
 
   // Need decent edge detection
   const edgeScore = edgeVotes / samples;
-  if (edgeScore < 0.3) {
+  if (edgeScore < 0.25) { // Lowered from 0.3
     return 0; // Not circular enough
   }
 
@@ -299,8 +299,8 @@ function scoreCircleSimple(
 
   // Balls should be fairly uniform in color
   let colorConsistency = 0;
-  if (avgColorDiff < 80) {
-    colorConsistency = 1 - (avgColorDiff / 80);
+  if (avgColorDiff < 100) { // Raised from 80 to be more lenient
+    colorConsistency = 1 - (avgColorDiff / 100);
   } else {
     return 0; // Too much color variation, not a ball
   }
@@ -350,7 +350,7 @@ function checkIfBallColor(r: number, g: number, b: number, brightness: number): 
   // - NOT cyan/green (table felt)
 
   // White ball (very bright)
-  if (brightness > 200 && Math.abs(r - g) < 30 && Math.abs(g - b) < 30) {
+  if (brightness > 180 && Math.abs(r - g) < 40 && Math.abs(g - b) < 40) { // More lenient
     return true;
   }
 
@@ -360,7 +360,7 @@ function checkIfBallColor(r: number, g: number, b: number, brightness: number): 
   const saturation = maxChannel - minChannel;
 
   // Good saturation indicates a colored ball
-  if (saturation > 40 && brightness > 50 && brightness < 220) {
+  if (saturation > 30 && brightness > 40 && brightness < 230) { // More lenient ranges
     // Not table felt
     if (!checkIfTableFelt(r, g, b)) {
       return true;
@@ -368,7 +368,7 @@ function checkIfBallColor(r: number, g: number, b: number, brightness: number): 
   }
 
   // Black/dark balls (8-ball, black in snooker)
-  if (brightness < 60 && brightness > 15 && Math.abs(r - g) < 20 && Math.abs(g - b) < 20) {
+  if (brightness < 70 && brightness > 10 && Math.abs(r - g) < 25 && Math.abs(g - b) < 25) {
     return true;
   }
 
